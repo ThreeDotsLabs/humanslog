@@ -239,6 +239,19 @@ func (h *developHandler) attrContainsStruct(a slog.Attr) bool {
 			return false
 		}
 
+		// Errors are formatted inline, not as structs
+		if _, ok := av.(error); ok {
+			return false
+		}
+
+		// Time types are formatted inline
+		if _, ok := av.(*time.Time); ok {
+			return false
+		}
+		if _, ok := av.(*time.Duration); ok {
+			return false
+		}
+
 		// Use reflection to check if it's a struct
 		avt := reflect.TypeOf(av)
 		if avt == nil {
@@ -520,11 +533,8 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 		val := []byte(a.Value.String())
 		valOld := val
 		vs := val
-		mark := []byte{}
-
 		switch a.Value.Kind() {
 		case slog.KindFloat64, slog.KindInt64, slog.KindUint64:
-			mark = h.colorString([]byte("#"), fgCyan)
 			val = h.colorString(val, fgCyan)
 		case slog.KindBool:
 			c := fgRed
@@ -532,17 +542,14 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 				c = fgGreen
 			}
 
-			mark = h.colorString([]byte("#"), c)
 			val = h.colorString(val, c)
 		case slog.KindString:
 			if len(val) == 0 {
 				val = h.colorStringFainted([]byte("empty"), fgWhite)
 			} else if h.isJSON(string(val)) {
 				// Format as colorized JSON
-				mark = h.colorString([]byte("J"), fgWhite)
 				val = h.formatJSONMultiline(string(val), l)
 			} else if h.isURL(val) {
-				mark = h.colorString([]byte("*"), fgCyan)
 				val = h.underlineText(h.colorString(val, fgCyan))
 			} else {
 				if h.opts.StringIndentation {
@@ -551,25 +558,21 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 				}
 			}
 		case slog.KindTime, slog.KindDuration:
-			mark = h.colorString([]byte("@"), fgWhite)
 			val = h.colorString(val, fgWhite)
 		case slog.KindAny:
 			av := a.Value.Any()
 			if err, ok := av.(error); ok {
-				mark = h.colorString([]byte("E"), fgRed)
 				// Always use inline format for errors
 				val = h.formatError(err)
 				break
 			}
 
 			if t, ok := av.(*time.Time); ok {
-				mark = h.colorString([]byte("@"), fgWhite)
 				val = h.colorString([]byte(t.String()), fgWhite)
 				break
 			}
 
 			if d, ok := av.(*time.Duration); ok {
-				mark = h.colorString([]byte("@"), fgWhite)
 				val = h.colorString([]byte(d.String()), fgWhite)
 				break
 			}
@@ -589,7 +592,6 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 			avt := reflect.TypeOf(av)
 			avv := reflect.ValueOf(av)
 			if avt == nil {
-				mark = h.colorString([]byte("!"), fgRed)
 				val = h.nilString()
 				break
 			}
@@ -599,27 +601,20 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 
 			switch ut.Kind() {
 			case reflect.Array:
-				mark = h.colorString([]byte("A"), fgGreen)
 				val = h.formatSlice(avt, avv, vi)
 			case reflect.Slice:
-				mark = h.colorString([]byte("S"), fgGreen)
 				val = h.formatSlice(avt, avv, vi)
 			case reflect.Map:
-				mark = h.colorString([]byte("M"), fgGreen)
 				val = h.formatMap(avt, avv, vi)
 			case reflect.Struct:
-				mark = h.colorString([]byte("S"), fgYellow)
 				val = h.formatStruct(avt, avv, l, vi)
 			case reflect.Float32, reflect.Float64:
-				mark = h.colorString([]byte("#"), fgCyan)
 				vs = atb(uv.Float())
 				val = append(val, h.colorString(vs, fgCyan)...)
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				mark = h.colorString([]byte("#"), fgCyan)
 				vs = atb(uv.Int())
 				val = append(val, h.colorString(vs, fgCyan)...)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				mark = h.colorString([]byte("#"), fgCyan)
 				vs = atb(uv.Uint())
 				val = append(val, h.colorString(vs, fgCyan)...)
 			case reflect.Bool:
@@ -628,7 +623,6 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 					c = fgGreen
 				}
 
-				mark = h.colorString([]byte("#"), c)
 				vs = atb(uv.Bool())
 				val = append(val, h.colorString(vs, c)...)
 			case reflect.String:
@@ -641,11 +635,9 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 					val = []byte(uv.String())
 				}
 			default:
-				mark = h.colorString([]byte("!"), fgRed)
 				val = h.colorString(atb("Unknown type"), fgRed)
 			}
 		case slog.KindGroup:
-			mark = h.colorString([]byte("G"), fgGreen)
 			var ga attributes
 			ga = a.Value.Group()
 			group = append(group, a.Key)
@@ -655,7 +647,6 @@ func (h *developHandler) colorize(b []byte, as attributes, l int, group []string
 		}
 
 		b = append(b, bytes.Repeat([]byte(" "), l*2)...)
-		b = append(b, mark...)
 		b = append(b, ' ')
 		b = append(b, key...)
 		// Only add padding for alignment when not in OneLineFormat mode
@@ -755,8 +746,7 @@ func (h *developHandler) formatSlice(st reflect.Type, sv reflect.Value, vi visit
 	ts := h.buildTypeString(st.String())
 	_, sv, _ = h.reducePointerTypeValue(st, sv)
 
-	b := h.colorString([]byte(strconv.Itoa(sv.Len())), fgCyan)
-	b = append(b, ' ')
+	var b []byte
 	b = append(b, ts...)
 	b = append(b, h.colorString([]byte("{"), fgGreen)...)
 
@@ -780,8 +770,7 @@ func (h *developHandler) formatMap(st reflect.Type, sv reflect.Value, vi visited
 	ts := h.buildTypeString(st.String())
 	_, sv, _ = h.reducePointerTypeValue(st, sv)
 
-	b := h.colorString([]byte(strconv.Itoa(sv.Len())), fgCyan)
-	b = append(b, ' ')
+	var b []byte
 	b = append(b, ts...)
 	b = append(b, h.colorString([]byte("{"), fgGreen)...)
 
